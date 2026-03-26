@@ -22,27 +22,30 @@ class MatchSummaryScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 10),
         child: Column(
           children: [
-            // 1. 【最上方】最顯眼的比分總結
-            const Text('SET SCORE', style: TextStyle(color: Colors.grey, fontSize: 12, letterSpacing: 2)),
+            // 1. 【最上方】總勝局數與真實勝負
+            const Text('MATCH SCORE (總勝局數)', style: TextStyle(color: Colors.grey, fontSize: 12, letterSpacing: 2)),
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildLargeScore(provider.scoreTeamA.toString()),
+                // ★ 改成顯示我方贏了幾局
+                _buildLargeScore(provider.teamASetsWon.toString()),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
                   child: Text(':', style: TextStyle(color: Colors.white24, fontSize: 40, fontWeight: FontWeight.w300)),
                 ),
-                _buildLargeScore(provider.scoreTeamB.toString()),
+                // ★ 改成顯示對手贏了幾局
+                _buildLargeScore(provider.teamBSetsWon.toString()),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              provider.scoreTeamA >= provider.scoreTeamB ? 'WIN - 我方勝利' : 'LOSS - 繼續加油',
+              provider.isMatchWon ? ' WIN ' : ' LOSS ',
               style: TextStyle(
-                color: provider.scoreTeamA >= provider.scoreTeamB ? Colors.orange : Colors.redAccent,
+                color: provider.isMatchWon ? Colors.orange : Colors.redAccent,
                 fontWeight: FontWeight.bold,
-                fontSize: 16,
+                fontSize: 18,
+                letterSpacing: 2,
               ),
             ),
             

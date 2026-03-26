@@ -206,9 +206,12 @@ class MatchProvider extends ChangeNotifier {
   }
 
   void undo() {
-    if (_eventHistory.isEmpty) return;
+    // ★ 核心修復：如果「這局」還沒有任何紀錄，就不允許 Undo，防止跨局退回到上一局的數據！
+    if (currentSetHistory.isEmpty) return;
+
     final lastLog = _eventHistory.removeLast();
     final snapshot = lastLog.beforeStateSnapshot as Map<String, dynamic>;
+    
     _scoreTeamA = snapshot['scoreA'];
     _scoreTeamB = snapshot['scoreB'];
     _isOurServe = snapshot['isOurServe'];
@@ -216,6 +219,7 @@ class MatchProvider extends ChangeNotifier {
     _pairedPlayerId = snapshot['pairedPlayerId'];
     _currentRallyId = snapshot['rallyId']; 
     _positions = Map<CourtPosition, String?>.from(snapshot['positions']);
+    
     notifyListeners();
   }
 
@@ -268,4 +272,38 @@ class MatchProvider extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  // --- 真實勝負計算 ---
+  int get teamASetsWon {
+    int wins = 0;
+    // 1. 先計算歷史局數
+    for (String score in _setScoreHistory) {
+      final parts = score.split('-');
+      if (parts.length == 2) {
+        int a = int.tryParse(parts[0].trim()) ?? 0;
+        int b = int.tryParse(parts[1].trim()) ?? 0;
+        if (a > b) wins++;
+      }
+    }
+    // 2. 算入當前這局（結算時如果我方分數領先，也算贏下這局）
+    if (_scoreTeamA > _scoreTeamB) wins++;
+    return wins;
+  }
+
+  int get teamBSetsWon {
+    int wins = 0;
+    for (String score in _setScoreHistory) {
+      final parts = score.split('-');
+      if (parts.length == 2) {
+        int a = int.tryParse(parts[0].trim()) ?? 0;
+        int b = int.tryParse(parts[1].trim()) ?? 0;
+        if (b > a) wins++;
+      }
+    }
+    if (_scoreTeamB > _scoreTeamA) wins++;
+    return wins;
+  }
+
+  // 判斷整場比賽是否獲勝
+  bool get isMatchWon => teamASetsWon >= teamBSetsWon;
 }
