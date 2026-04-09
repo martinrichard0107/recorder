@@ -293,10 +293,13 @@ class MatchProvider extends ChangeNotifier {
     _currentRallyId = snapshot['rallyId']; 
     _positions = Map<CourtPosition, String?>.from(snapshot['positions']);
     
+    currentTeamRotation = snapshot['teamRotation'] ?? 1;
+    
     notifyListeners();
   }
 
   void _performRotation() {
+    currentTeamRotation = currentTeamRotation == 6 ? 1 : currentTeamRotation + 1;
     if (_isLiberoOnCourt && _liberoId != null) {
       CourtPosition? liberoPos;
       _positions.forEach((k, v) { if (v == _liberoId) liberoPos = k; });
@@ -325,6 +328,7 @@ class MatchProvider extends ChangeNotifier {
       'positions': Map<CourtPosition, String?>.from(_positions),
       'isLiberoOnCourt': _isLiberoOnCourt, 'pairedPlayerId': _pairedPlayerId,
       'rallyId': _currentRallyId,
+      'teamRotation': currentTeamRotation,
     };
   }
 
