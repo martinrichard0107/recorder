@@ -37,6 +37,7 @@ dependencies:
   uuid: ^4.5.2
   provider: ^6.1.5+1
   http: ^1.6.0
+  fl_chart: ^0.66.0
 
 dev_dependencies:
   flutter_test:

@@ -1,9 +1,79 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
 import '../providers/match_provider.dart';
+import 'match_dashboard_screen.dart';
 
-class MatchSummaryScreen extends StatelessWidget {
+class MatchSummaryScreen extends StatefulWidget {
   const MatchSummaryScreen({super.key});
+
+  @override
+  State<MatchSummaryScreen> createState() => _MatchSummaryScreenState();
+}
+
+class _MatchSummaryScreenState extends State<MatchSummaryScreen> {
+  bool _isSaving = false;
+
+  // --- 發射數據給 Node.js API 的方法 ---
+  Future<void> _saveMatchData(MatchProvider provider) async {
+    setState(() => _isSaving = true);
+
+    // 1. 準備要發送的 JSON 資料包裹
+    final matchData = {
+      "id": provider.matchId,
+      "team_id": "t1", // 嘉大資管的 ID
+      "opponent_name": provider.opponentName,
+      "our_sets_won": provider.teamASetsWon,
+      "opponent_sets_won": provider.teamBSetsWon,
+      "result": provider.isMatchWon ? "WIN" : "LOSS",
+      
+      // 組合每一局的比分
+      "sets": provider.setScoreHistory.asMap().entries.map((entry) {
+        final parts = entry.value.split('-');
+        return {
+          "set_number": entry.key + 1,
+          "our_score": int.tryParse(parts[0].trim()) ?? 0,
+          "opponent_score": int.tryParse(parts[1].trim()) ?? 0,
+        };
+      }).toList(),
+      
+      // 把逐球紀錄轉成 JSON 陣列
+      "play_logs": provider.matchPlayLogs.map((log) => log.toJson()).toList(),
+    };
+
+    try {
+      // 2. 向你的 API 發送 POST 請求
+      // ⚠️ 如果你是用手機實機測試，請把 localhost 換成你電腦的區域網路 IP (例如 192.168.x.x)
+      final response = await http.post(
+        Uri.parse('http://127.0.0.1:3000/api/matches'), 
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode(matchData),
+      );
+
+      if (response.statusCode == 201) {
+        // 成功存入資料庫！
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('🎉 完美！比賽紀錄與進階數據已存入資料庫！'), backgroundColor: Colors.green),
+          );
+          // 回到 APP 首頁 (你原本的邏輯)
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      } else {
+        throw Exception('API 回傳錯誤: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('儲存失敗: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('儲存失敗，請確認 API 是否啟動 ($e)'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -17,6 +87,7 @@ class MatchSummaryScreen extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        automaticallyImplyLeading: false, // 隱藏左上角返回鍵，強迫儲存
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 10),
@@ -28,19 +99,17 @@ class MatchSummaryScreen extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // ★ 改成顯示我方贏了幾局
                 _buildLargeScore(provider.teamASetsWon.toString()),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 20),
                   child: Text(':', style: TextStyle(color: Colors.white24, fontSize: 40, fontWeight: FontWeight.w300)),
                 ),
-                // ★ 改成顯示對手贏了幾局
                 _buildLargeScore(provider.teamBSetsWon.toString()),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              provider.isMatchWon ? ' WIN ' : ' LOSS ',
+              provider.isMatchWon ? ' WIN - 嘉大資管 ' : ' LOSS ',
               style: TextStyle(
                 color: provider.isMatchWon ? Colors.orange : Colors.redAccent,
                 fontWeight: FontWeight.bold,
@@ -85,22 +154,57 @@ class MatchSummaryScreen extends StatelessWidget {
 
             const SizedBox(height: 30),
             
-            // 4. Box Score 數據表 (中文 + 撐滿螢幕)
+            // 4. Box Score 數據表
             _buildBoxScoreTable(context, boxScore),
             
             const SizedBox(height: 40),
             
-            // 底部按鈕
+            // ★ 新增：前往儀表板的按鈕
+            ElevatedButton.icon(
+              onPressed: () {
+                // 1. 整理目前的比賽比分狀態
+                final liveInfo = {
+                  'opponent_name': provider.opponentName,
+                  'our_sets_won': provider.teamASetsWon,
+                  'opponent_sets_won': provider.teamBSetsWon,
+                };
+
+                // 2. ⚠️ 關鍵：把你 Provider 裡面的 Event 轉換成儀表板看得懂的 JSON 格式
+                final logsJson = provider.matchPlayLogs.map((log) => log.toJson()).toList();
+
+                // 3. 把包好的包裹丟給儀表板！
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => MatchDashboardScreen(
+                      livePlayLogs: logsJson, 
+                      liveMatchInfo: liveInfo,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.analytics, color: Colors.white),
+              label: const Text('查看數據報表', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                minimumSize: const Size(double.infinity, 55),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 16), // 按鈕之間的間距
+
+            // ★ 原本的儲存按鈕
             ElevatedButton(
-              onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+              onPressed: _isSaving ? null : () => _saveMatchData(provider),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.orange[800],
                 minimumSize: const Size(double.infinity, 55),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-              child: const Text('開始新比賽', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              child: _isSaving 
+                  ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('儲存紀錄並結束比賽', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 30),
           ],
         ),
       ),
@@ -151,7 +255,6 @@ class MatchSummaryScreen extends StatelessWidget {
     ),
   );
 
-  // ★ 修正後的球員明細表：全中文、自適應寬度、數字上色
   Widget _buildBoxScoreTable(BuildContext context, List<Map<String, dynamic>> boxScore) => Container(
     width: double.infinity,
     decoration: BoxDecoration(color: const Color(0xFF161B22), borderRadius: BorderRadius.circular(16)),
@@ -159,12 +262,11 @@ class MatchSummaryScreen extends StatelessWidget {
     child: SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: ConstrainedBox(
-        // 強制表格最小寬度等於螢幕寬度減去 padding (24*2 = 48)，這樣就不會縮在左邊
         constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - 48),
         child: DataTable(
-          columnSpacing: 20, // 拉開欄位間距
+          columnSpacing: 20, 
           horizontalMargin: 16,
-          headingRowColor: WidgetStateProperty.all(Colors.white.withAlpha(10)), // 標題列給一點底色區分
+          headingRowColor: WidgetStateProperty.all(Colors.white.withAlpha(10)), 
           columns: const [
             DataColumn(label: Text('號碼', style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))),
             DataColumn(label: Text('姓名', style: TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))),
@@ -177,12 +279,10 @@ class MatchSummaryScreen extends StatelessWidget {
           rows: boxScore.map((d) => DataRow(cells: [
             DataCell(Text('${d['jersey']}', style: const TextStyle(fontSize: 13, color: Colors.white))),
             DataCell(Text('${d['name']}', style: const TextStyle(fontSize: 13, color: Colors.white))),
-            // 總分用橘色標記
             DataCell(Text('${d['pts']}', style: const TextStyle(fontSize: 14, color: Colors.orange, fontWeight: FontWeight.bold))),
             DataCell(Text('${d['kill']}', style: const TextStyle(fontSize: 13, color: Colors.white))),
             DataCell(Text('${d['blk']}', style: const TextStyle(fontSize: 13, color: Colors.white))),
             DataCell(Text('${d['ace']}', style: const TextStyle(fontSize: 13, color: Colors.white))),
-            // 失誤用紅色標記
             DataCell(Text('${d['err']}', style: const TextStyle(fontSize: 13, color: Colors.redAccent))),
           ])).toList(),
         ),
