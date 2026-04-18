@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:http/http.dart' as http;
 import '../models/player.dart';
 import '../providers/match_provider.dart';
 import 'match_score_screen.dart';
@@ -18,20 +20,15 @@ class _StartingLineupScreenState extends State<StartingLineupScreen> {
   };
   Player? selectedLibero;
 
-  final List<Player> teamPlayers = [
-    Player(id: '1', jerseyNo: 1, name: '小明', role: PlayerRole.outside),
-    Player(id: '2', jerseyNo: 3, name: '阿華', role: PlayerRole.middle),
-    Player(id: '3', jerseyNo: 5, name: '建國', role: PlayerRole.opposite),
-    Player(id: '4', jerseyNo: 7, name: '老王', role: PlayerRole.setter),
-    Player(id: '5', jerseyNo: 9, name: '大黑', role: PlayerRole.middle),
-    Player(id: '6', jerseyNo: 11, name: '小白', role: PlayerRole.outside),
-    Player(id: '7', jerseyNo: 12, name: '阿信', role: PlayerRole.libero),
-    Player(id: '8', jerseyNo: 15, name: '小陳', role: PlayerRole.outside),
-  ];
+  // ★ 1. 改成空的清單，等待資料庫傳入
+  List<Player> teamPlayers = [];
+  bool isLoading = true; // ★ 載入狀態
 
   @override
   void initState() {
     super.initState();
+    _fetchPlayersFromDB(); // ★ 啟動時先去抓資料
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<MatchProvider>(context, listen: false);
       if (provider.positions[CourtPosition.p1] != null) {
@@ -47,6 +44,33 @@ class _StartingLineupScreenState extends State<StartingLineupScreen> {
         });
       }
     });
+  }
+
+  // ★ 2. 去資料庫抓球員的非同步方法
+  Future<void> _fetchPlayersFromDB() async {
+    try {
+      // 呼叫你的 Node.js API
+      final response = await http.get(Uri.parse('http://localhost:3000/api/players'));
+      
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        setState(() {
+          // 將 JSON 轉換成 Player 物件並存入清單
+          teamPlayers = data.map((json) => Player.fromMap(json)).toList();
+          isLoading = false; // 抓完資料，關閉載入動畫
+        });
+      } else {
+        throw Exception('無法讀取球員名單');
+      }
+    } catch (e) {
+      print('連線錯誤: $e');
+      setState(() => isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('無法連線到資料庫，請確認 API 是否啟動。'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   CourtPosition _intToCourtPos(int i) {
@@ -229,6 +253,14 @@ class _StartingLineupScreenState extends State<StartingLineupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ★ 3. 正在讀取資料時，顯示橘色的轉圈圈
+    if (isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF1A1A1A),
+        body: Center(child: CircularProgressIndicator(color: Colors.orange)),
+      );
+    }
+
     bool ready = !selectedStarters.values.contains(null) && selectedLibero != null;
 
     return Scaffold(
@@ -265,7 +297,6 @@ class _StartingLineupScreenState extends State<StartingLineupScreen> {
                   style: ElevatedButton.styleFrom(backgroundColor: ready ? Colors.orange[800] : Colors.grey[850]),
                   onPressed: ready ? () {
                     final provider = Provider.of<MatchProvider>(context, listen: false);
-                    // ★ 這裡把 teamPlayers 整包傳給大腦
                     provider.startNewSet(allPlayers: teamPlayers, rotation: selectedStarters, libero: selectedLibero, opponentName: _opponentController.text);
                     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MatchScoreScreen()));
                   } : null,

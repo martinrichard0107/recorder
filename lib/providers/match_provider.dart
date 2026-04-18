@@ -7,6 +7,11 @@ import '../services/libero_service.dart';
 import '../services/event_rules.dart';
 
 class MatchProvider extends ChangeNotifier {
+  // --- 新增：進階數據記憶區 ---
+  List<PlayLog> matchPlayLogs = []; 
+  String currentRallyId = DateTime.now().millisecondsSinceEpoch.toString(); 
+  int currentTeamRotation = 1;
+
   final String matchId = const Uuid().v4();
   int _currentSet = 1;
   String _currentRallyId = const Uuid().v4(); 
@@ -88,9 +93,14 @@ class MatchProvider extends ChangeNotifier {
     if (receives.isEmpty) return 0.0;
     double totalWeight = 0;
     for (var r in receives) {
-      if (r.detailType == 'Perfect') totalWeight += 3;
-      else if (r.detailType == 'Good') totalWeight += 2;
-      else if (r.detailType == 'Bad') totalWeight += 1;
+      // 🚨 修復警告：加上大括號
+      if (r.detailType == 'Perfect') {
+        totalWeight += 3;
+      } else if (r.detailType == 'Good') {
+        totalWeight += 2;
+      } else if (r.detailType == 'Bad') {
+        totalWeight += 1;
+      }
     }
     return totalWeight / receives.length;
   }
@@ -114,7 +124,7 @@ class MatchProvider extends ChangeNotifier {
 
   // --- 局間轉換 ---
   void startNewSet({
-    required List<Player> allPlayers, // ★ 這裡新增了接收球隊大名單
+    required List<Player> allPlayers, 
     required Map<int, MapEntry<Player, PlayerRole>?> rotation,
     required Player? libero,
     required String opponentName,
@@ -124,7 +134,7 @@ class MatchProvider extends ChangeNotifier {
       _currentSet++;
     }
     
-    _allPlayers = allPlayers; // ★ 把大名單存進大腦
+    _allPlayers = allPlayers; 
     _opponentName = opponentName;
     _scoreTeamA = 0;
     _scoreTeamB = 0;
@@ -158,13 +168,38 @@ class MatchProvider extends ChangeNotifier {
   }
 
   void handleEvent({required EventCategory category, required String detailType}) {
+    // 確保有選到球員，沒選到的話就用系統預設
     final player = selectedPlayer ?? Player(id: 'system', jerseyNo: 0, name: 'Team', role: PlayerRole.setter);
+    
     final result = EventRules.calculateOutcome(category: category, detailType: detailType);
     final snapshot = _createSnapshot();
 
+    // ★ 1. 在比分改變前，先把這個動作寫進進階數據百寶箱！
+    int playerPosNum = 1; 
+    if (selectedPlayerId != null) {
+       _positions.forEach((pos, id) {
+         if (id == selectedPlayerId) {
+           String posStr = pos.toString().split('.').last;
+           playerPosNum = int.tryParse(posStr.replaceAll(RegExp(r'[^0-9]'), '')) ?? 1;
+         }
+       });
+    }
+
+    // 🚨 修復核心：這裡是「呼叫」 recordAction，把剛才算好的 playerPosNum 丟進去！
+    recordAction(
+      playerId: player.id,
+      playerName: player.name,  // ★ 補上姓名
+      jerseyNo: player.jerseyNo, // ★ 補上背號
+      playerPosition: playerPosNum,
+      actionType: category.toString().split('.').last,
+      actionResult: detailType,
+    );
+
+    // 2. 處理比分變化
     _scoreTeamA += result.scoreDeltaTeam;
     _scoreTeamB += result.scoreDeltaOpp;
     
+    // 3. 處理發球權與輪轉位
     bool rotationHappened = false;
     if (result.scoreDeltaTeam > 0) {
       if (!_isOurServe) {
@@ -176,6 +211,7 @@ class MatchProvider extends ChangeNotifier {
       _isOurServe = false; 
     }
 
+    // 4. 記錄到你原本左側側邊欄的歷史紀錄
     _eventHistory.add(EventLog(
       id: const Uuid().v4(), matchId: matchId, setNumber: _currentSet.toString(), rallyId: _currentRallyId,
       timestamp: DateTime.now(), playerId: player.id, playerName: player.name, playerJerseyNo: player.jerseyNo,
@@ -185,9 +221,13 @@ class MatchProvider extends ChangeNotifier {
       beforeStateSnapshot: snapshot,
     ));
 
+    // 5. 如果這球死球了 (得分或失誤)，就換一組新的 Rally ID 給下一球
     if (result.outcome != EventOutcome.neutral) {
       _currentRallyId = const Uuid().v4();
     }
+    
+    // 動作做完，取消選取球員
+    _selectedPlayerId = null;
     notifyListeners(); 
   }
 
@@ -205,10 +245,46 @@ class MatchProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- 新增：記錄每一個動作 (外層真正的函數宣告) ---
+  // 🚨 修復核心：補上 playerName 和 jerseyNo 參數
+  void recordAction({
+    required String playerId,
+    required String playerName,  
+    required int jerseyNo,
+    required int playerPosition,
+    required String actionType,
+    required String actionResult,
+  }) {
+    final log = PlayLog(
+      setNumber: _setScoreHistory.length + 1, 
+      ourScore: _scoreTeamA,
+      opponentScore: _scoreTeamB,
+      isOurServe: _isOurServe,
+      teamRotation: currentTeamRotation,
+      rallyId: currentRallyId,
+      playerId: playerId,
+      playerName: playerName, // ★ 正確傳入
+      jerseyNo: jerseyNo,     // ★ 正確傳入
+      playerPosition: playerPosition,
+      actionType: actionType,
+      actionResult: actionResult,
+    );
+
+    matchPlayLogs.add(log);
+
+    if (actionResult == 'Score' || actionResult == 'Error') {
+      currentRallyId = DateTime.now().millisecondsSinceEpoch.toString();
+    }
+
+    notifyListeners();
+  }
+  
   void undo() {
-    if (_eventHistory.isEmpty) return;
+    if (currentSetHistory.isEmpty) return;
+
     final lastLog = _eventHistory.removeLast();
     final snapshot = lastLog.beforeStateSnapshot as Map<String, dynamic>;
+    
     _scoreTeamA = snapshot['scoreA'];
     _scoreTeamB = snapshot['scoreB'];
     _isOurServe = snapshot['isOurServe'];
@@ -216,10 +292,14 @@ class MatchProvider extends ChangeNotifier {
     _pairedPlayerId = snapshot['pairedPlayerId'];
     _currentRallyId = snapshot['rallyId']; 
     _positions = Map<CourtPosition, String?>.from(snapshot['positions']);
+    
+    currentTeamRotation = snapshot['teamRotation'] ?? 1;
+    
     notifyListeners();
   }
 
   void _performRotation() {
+    currentTeamRotation = currentTeamRotation == 6 ? 1 : currentTeamRotation + 1;
     if (_isLiberoOnCourt && _liberoId != null) {
       CourtPosition? liberoPos;
       _positions.forEach((k, v) { if (v == _liberoId) liberoPos = k; });
@@ -248,6 +328,7 @@ class MatchProvider extends ChangeNotifier {
       'positions': Map<CourtPosition, String?>.from(_positions),
       'isLiberoOnCourt': _isLiberoOnCourt, 'pairedPlayerId': _pairedPlayerId,
       'rallyId': _currentRallyId,
+      'teamRotation': currentTeamRotation,
     };
   }
 
@@ -267,5 +348,82 @@ class MatchProvider extends ChangeNotifier {
       _isLiberoOnCourt = true;
     }
     notifyListeners();
+  }
+
+  int get teamASetsWon {
+    int wins = 0;
+    for (String score in _setScoreHistory) {
+      final parts = score.split('-');
+      if (parts.length == 2) {
+        int a = int.tryParse(parts[0].trim()) ?? 0;
+        int b = int.tryParse(parts[1].trim()) ?? 0;
+        if (a > b) wins++;
+      }
+    }
+    if (_scoreTeamA > _scoreTeamB) wins++;
+    return wins;
+  }
+
+  int get teamBSetsWon {
+    int wins = 0;
+    for (String score in _setScoreHistory) {
+      final parts = score.split('-');
+      if (parts.length == 2) {
+        int a = int.tryParse(parts[0].trim()) ?? 0;
+        int b = int.tryParse(parts[1].trim()) ?? 0;
+        if (b > a) wins++;
+      }
+    }
+    if (_scoreTeamB > _scoreTeamA) wins++;
+    return wins;
+  }
+
+  bool get isMatchWon => teamASetsWon >= teamBSetsWon;
+}
+
+class PlayLog {
+  final int setNumber;
+  final int ourScore;
+  final int opponentScore;
+  final bool isOurServe;
+  final int teamRotation;
+  final String rallyId;
+  final String playerId;
+  final String playerName;    
+  final int jerseyNo;
+  final int playerPosition;
+  final String actionType;
+  final String actionResult;
+
+  PlayLog({
+    required this.setNumber,
+    required this.ourScore,
+    required this.opponentScore,
+    required this.isOurServe,
+    required this.teamRotation,
+    required this.rallyId,
+    required this.playerId,
+    required this.playerName,   
+    required this.jerseyNo, 
+    required this.playerPosition,
+    required this.actionType,
+    required this.actionResult,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'set_number': setNumber,
+      'our_score': ourScore,
+      'opponent_score': opponentScore,
+      'is_our_serve': isOurServe ? 1 : 0, 
+      'team_rotation': teamRotation,
+      'rally_id': rallyId,
+      'player_id': playerId,
+      'player_name': playerName,   
+      'jersey_no': jerseyNo, 
+      'player_position': playerPosition,
+      'action_type': actionType,
+      'action_result': actionResult,
+    };
   }
 }

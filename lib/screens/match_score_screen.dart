@@ -30,8 +30,6 @@ class _MatchScoreScreenState extends State<MatchScoreScreen> {
     CourtPosition.p5: const Alignment(-0.75, 0.6),  CourtPosition.p6: const Alignment(0.0, 0.6),  CourtPosition.p1: const Alignment(0.75, 0.6),
   };
 
-  // ★ 已經刪除 initState 與 _initMockData，現在會直接吃先發頁面傳來的真實資料！
-
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<MatchProvider>();
